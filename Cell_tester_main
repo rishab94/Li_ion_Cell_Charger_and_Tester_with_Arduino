@@ -107,8 +107,8 @@ ISR(timer1Event)
 {
   resetTimer1();
   flag=1; // set the flag to enable data logging in main loop
-  tim = millis();
-  if(chg_dir == 0)  //Calibration inputs - ADC reference fluctuations
+  tim = micros();
+  if(chg_dir == 0)                      //Calibration inputs - ADC reference fluctuations
   {
     Vt=analogRead(A1)*0.001871 +2.495;  
     I =analogRead(A0)*0.004731;       
@@ -144,7 +144,7 @@ ISR(timer3Event) //PI controller
         volt_flag = 1; //Wait for next reading
       }
       else if(volt_flag == 1)
-      { 
+      {
         volt_flag = 0;
         ei = 0;        //Reset accumulator for integrator
         chg_mode = 1;  //Switch mode to CV
@@ -157,18 +157,18 @@ ISR(timer3Event) //PI controller
       cur_flag = 1;        //Stop Charging/Discharging
     if  (chg_dir == 0)     //Charge
     {
-      er = V_max - Vt;     // error 
+      er = V_max - Vt;     // error; increasing current ref during charging increases cell terminal voltage
     }
     else if (chg_dir == 1) //Discharge
     {
-      er = V_min - Vt;     //error
+      er = Vt - V_min;     //error; Increasing current ref during discharge decreases cell terminal voltage
     }
     
-    if(sat_flag == 0)
+    if(sat_flag == 0)        //Anti-windup - Stop accumulation if output saturated
     {
       ei = ei + er*T_pi;     // accumulated error for integral action
     }
-    Iref = 0.2*er + 30*ei; // reference generation
+    Iref = 0.2*er + 30*ei;   // reference generation
 
   }
   //Iref = 1;
@@ -198,7 +198,7 @@ ISR(timer4Event) // reference generation
     }
     else 
     {
-      sat_flag = 0;
+      sat_flag = 0;      //Ref within linear range
     }
     digitalWrite(32,1);
     delayMicroseconds(2*duty);
@@ -225,23 +225,15 @@ void loop()
       dataString += String(I);
       dataString += String(",");
       dataString += String(Vt);
-      Serial.println(dataString, 3);
+      Serial.println(dataString);
       File dataFile = SD.open("data10.txt", FILE_WRITE); //open file on the sd card to write. File name should not exit 8 characters, e.g. datalog11 is invalid.
   
       if (dataFile) // check if the datafile is present. If yes, write to it.
         {
-          dataFile.println(dataString, 3);
+          dataFile.println(dataString);
           dataFile.close();
         }
     }
   }
     flag =0; //reset the flag when data is logged    
 }
-
-
-
-
-
-
-
-
