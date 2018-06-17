@@ -63,6 +63,8 @@ void setup()
   pinMode(A0,INPUT);    //Current Input
   pinMode(A1,INPUT);    //Voltage Input
   pinMode(13,OUTPUT);
+
+  cur_flag = 0;
   
   digitalWrite(53, 0); //Chip Select for memory card
   
@@ -118,6 +120,11 @@ ISR(timer1Event)
     Vt=analogRead(A1)*0.0018385 +2.495; 
     I =analogRead(A0)*0.00474;        
   }
+  if(I <= (Q*I_cut_off/1000))
+  {
+    cur_flag++;        //Stop Charging/Discharging
+  }
+  else cur_flag = 0;
 }
 
 //******* Timer 3 ISR *******//
@@ -153,8 +160,6 @@ ISR(timer3Event) //PI controller
   }
   else if (chg_mode == 1)  //CV mode
   {
-    if(I <= (Q*I_cut_off/1000))
-      cur_flag = 1;        //Stop Charging/Discharging
     if  (chg_dir == 0)     //Charge
     {
       er = V_max - Vt;     // error; increasing current ref during charging increases cell terminal voltage
@@ -204,7 +209,7 @@ ISR(timer4Event) // reference generation
     delayMicroseconds(2*duty);
     digitalWrite(32,0);
   }
-  else if(cur_flag == 1)
+  else if(cur_flag == 4)
   {
     digitalWrite(32, 0);  //Stop charging/discharging completely
   }
@@ -222,9 +227,11 @@ void loop()
       dataString += String(",");
       dataString += String(chg_mode);
       dataString += String(",");
-      dataString += String(I);
+      dataString += String(cur_flag);
       dataString += String(",");
-      dataString += String(Vt);
+      dataString += String(I, 3);
+      dataString += String(",");
+      dataString += String(Vt, 3);
       Serial.println(dataString);
       File dataFile = SD.open("data10.txt", FILE_WRITE); //open file on the sd card to write. File name should not exit 8 characters, e.g. datalog11 is invalid.
   
