@@ -1,4 +1,3 @@
-
 /*  SD card datalogger
 
  The circuit:
@@ -17,7 +16,9 @@
 
  */
  
- //Cell Test System - Rishab Anand and Amarkumar K.  
+ /* Li-ion cell test system - Rishab Anand and Amarkumar K.
+    IIT Bombay, Summer 2018.
+ */
 
 #include <SPI.h>
 #include <SD.h>
@@ -27,12 +28,14 @@
 //#include <Timer5.h>
 
 // ************ Cell Parameters ************* //
-float V_max = 4.2;             // Upper cell voltage limit
-float V_min = 3.70;            // Lower cell voltage limit
-float Q = 2000;                // Cell capacity in mAh
-float C_rate = 0.25;           // Charging current in CC mode
-float I_cut_off = 1/25;        // Cut-off current for CV mode in C
-int chg_dir  = 0;              // Charge:0; Discharge:1
+const float V_max = 4.2;             // Upper cell voltage limit
+const float V_min = 3.0;               // Lower cell voltage limit
+const float Q = 2000;                // Approximate cell capacity in mAh
+
+//***** Charging Process Parameters *********//
+const float C_rate = 0.03;           // Charging current in CC mode
+const float I_cut_off = 0.03;        // Cut-off current for CV mode in C
+const int chg_dir  = 1;              // Charge:0; Discharge:1
 
 float Vt;                      // Variable to hold sensed terminal voltage (final value in V)
 float I;                       // Variable to hold sensed current (final value in A)
@@ -44,20 +47,21 @@ int duty=80;
 
 int flag;                      // flag to be used for data logging. Log the data only when flag is set
 int volt_flag = 0;             // flag to be used to check voltage limits to switch to CV mode from CC mode
+int cur_flag_cnt = 0;          // Counts number of instances the current is registered below the cut-off limit in CV mode
 int cur_flag = 0;              // flag to be used to check current in CV mode to stop charging
-
 
 float T_pi=0.04;               // Timestep
 float er,ei=0;                 // initialize PI controller parameters
 int sat_flag = 0;              // Saturation flag for anti-windup
 unsigned long tim;             // variable to store time in millisecond
-int chg_mode = 0;              // CC:0; CV:1
 
+int chg_mode = 0;              // CC:0; CV:1
+int chg_hlth = 1;              // Charger Healthy:1; Fault:0
 
 void setup() 
 {
   pinMode(53,OUTPUT);   //Chip Select
-  pinMode(10,OUTPUT);  
+  pinMode(10,OUTPUT);
   pinMode(9,INPUT);
   pinMode(8,OUTPUT);    //Relay Coils
   pinMode(32,OUTPUT);   //PWM Output
@@ -65,10 +69,20 @@ void setup()
   pinMode(A0,INPUT);    //Current Input
   pinMode(A1,INPUT);    //Voltage Input
   pinMode(13,OUTPUT);
-
-  cur_flag = 0;
+  
+  pinMode(11,OUTPUT);   //Green LED - Cycle Complete - Charger Healthy
+  pinMode(12,OUTPUT);   //Red RED - Fault
+  
+  chg_mode = 0;         //Start process in CC mode
+  digitalWrite(11,0);
+  chg_hlth = 1;
+  digitalWrite(12,0);
   
   digitalWrite(53, 0); //Chip Select for memory card
+  
+  volt_flag = 0;
+  cur_flag_cnt = 0;
+  cur_flag = 0;
   
   //********* Set relay positions according to charging mode *********//
   if(chg_dir == 0)      //Charging
@@ -92,62 +106,74 @@ void setup()
   {
     ; // wait for serial port to connect. Needed for native USB port only
   }
-  Serial.print("Initializing SD card...");
+  Serial.print("Initializing SD card...\n");
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) 
   {
-    Serial.println("Card failed, or not present");
+    Serial.println("Card failed, or not present. \n");
     return;
   }
-  Serial.println("card initialized.");
+  Serial.println("Card initialized. \n");
   
 }
 
+//Function to check whether terminal voltage values are corrupted
+void chk_hlth(float Vt)
+{
+  if((Vt < (V_min - 0.2))||(Vt > (V_max + 0.2)))
+  {
+    chg_hlth = 0;
+    digitalWrite(12,1);
+  }
+}
 
 //******* Timer 1 ISR *******//
 // Sets flag for data logging
-// Sample processor time, current and voltage
+// Samples processor time, current and voltage
 ISR(timer1Event) 
 {
   resetTimer1();
-  flag=1; // set the flag to enable data logging in main loop
+  flag=1;                               // set the flag to enable data logging in main loop
   tim = micros();
   if(chg_dir == 0)                      //Calibration inputs - ADC reference fluctuations
   {
-    Vt=analogRead(A1)*0.001871 +2.495;  
-    I =analogRead(A0)*0.004731;       
+    //Vt=analogRead(A1)*0.00192 +2.495;
+    Vt = analogRead(A1)*0.001944 +2.495;  
+    I =analogRead(A0)*0.0051;       
+    //chk_hlth(Vt);                      //Verify terminal voltage is within limits
   }
   else if(chg_dir == 1)
   {
-    Vt=analogRead(A1)*0.0018385 +2.495; 
-    I =analogRead(A0)*0.00474;        
+    Vt=analogRead(A1)*0.00195 +2.495; 
+    //I =analogRead(A0)*0.0052;
+    I = analogRead(A0)*0.0051;
+    //chk_hlth(Vt);                      //Verify terminal voltage is within limits
   }
-  if(I <= (Q*I_cut_off/1000))
-  {
-    cur_flag++;        //Stop Charging/Discharging
-  }
-  else cur_flag = 0;
 }
 
 //******* Timer 3 ISR *******//
 // Controls switching from CC to CV mode 
-// Controls terminal voltage in CV mode 
+// Controls terminal voltage in CV mode by reducing current reference
 ISR(timer3Event) //PI controller
 {
   resetTimer3();
   if(chg_dir == 0)                      //Calibration inputs - ADC reference fluctuations
   {
-    Vt=analogRead(A1)*0.001871 +2.495;  
+    //Vt=analogRead(A1)*0.00195 +2.495;
+    Vt = analogRead(A1)*0.001944 +2.495;
+    //chk_hlth(Vt);  
   }
   else if(chg_dir == 1)
   {
-    Vt=analogRead(A1)*0.0018385 +2.495;  
+    Vt=analogRead(A1)*0.001195 +2.495;
+    //chk_hlth(Vt);  
   }
   if (chg_mode == 0)  //CC mode
   {
     Iref = C_rate*Q/1000;
-    if(((chg_dir == 0)&&(Vt >= V_max))||((chg_dir == 1)&&(Vt <= V_min)))
+    if(((chg_dir == 0)&&(Vt > V_max))||((chg_dir == 1)&&(Vt < V_min)))
     {
+      /*
       if(volt_flag == 0)
       {
         volt_flag = 1; //Wait for next reading
@@ -158,10 +184,28 @@ ISR(timer3Event) //PI controller
         ei = 0;        //Reset accumulator for integrator
         chg_mode = 1;  //Switch mode to CV
       } 
+      */
+      volt_flag = volt_flag+1;
+      if(volt_flag == 500)
+      {
+        //volt_flag = 0;
+        ei = 0;
+        //chg_mode = 1;
+      }
     }
   }
   else if (chg_mode == 1)  //CV mode
   {
+    if(I <= (Q*I_cut_off/1000))
+    {
+      cur_flag_cnt+=1;
+      if(cur_flag_cnt == 50)
+      {
+        cur_flag_cnt = 0;
+        cur_flag = 1;      //Stop Charging/Discharging
+        digitalWrite(11,1);  //Turn ON Green LED
+      }   
+    }
     if  (chg_dir == 0)     //Charge
     {
       er = V_max - Vt;     // error; increasing current ref during charging increases cell terminal voltage
@@ -211,7 +255,7 @@ ISR(timer4Event) // reference generation
     delayMicroseconds(2*duty);
     digitalWrite(32,0);
   }
-  else if(cur_flag == 4)
+  else if(cur_flag == 1)
   {
     digitalWrite(32, 0);  //Stop charging/discharging completely
   }
@@ -226,16 +270,18 @@ void loop()
       dataString = String(tim);
       dataString += String(",");
       dataString += String(chg_dir);
+      //dataString += String((Vt>V_min));
       dataString += String(",");
       dataString += String(chg_mode);
       dataString += String(",");
+      dataString += String(I,3);
+      dataString += String(",");
+      dataString += String(Vt,3);
+      dataString += String(",");
       dataString += String(cur_flag);
-      dataString += String(",");
-      dataString += String(I, 3);
-      dataString += String(",");
-      dataString += String(Vt, 3);
+      //dataString += String(volt_flag);
       Serial.println(dataString);
-      File dataFile = SD.open("data10.txt", FILE_WRITE); //open file on the sd card to write. File name should not exit 8 characters, e.g. datalog11 is invalid.
+      File dataFile = SD.open("2C2209.txt", FILE_WRITE); //open file on the sd card to write. File name should not exceed 8 characters, e.g. datalog11 is invalid.
   
       if (dataFile) // check if the datafile is present. If yes, write to it.
         {
@@ -246,3 +292,11 @@ void loop()
   }
     flag =0; //reset the flag when data is logged    
 }
+
+
+
+
+
+
+
+
