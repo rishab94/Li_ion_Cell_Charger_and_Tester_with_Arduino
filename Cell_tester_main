@@ -13,7 +13,6 @@
  by Tom Igoe
 
  This example code is in the public domain.
-
  */
  
  /* Li-ion cell test system - Rishab Anand and Amarkumar K.
@@ -113,8 +112,7 @@ void setup()
     Serial.println("Card failed, or not present. \n");
     return;
   }
-  Serial.println("Card initialized. \n");
-  
+  Serial.println("Card initialized. \n");  
 }
 
 //Function to check whether terminal voltage values are corrupted
@@ -292,11 +290,3 @@ void loop()
   }
     flag =0; //reset the flag when data is logged    
 }
-
-
-
-
-
-
-
-
